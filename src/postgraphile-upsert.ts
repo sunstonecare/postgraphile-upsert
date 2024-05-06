@@ -1,76 +1,85 @@
-import { Build, Context, Plugin } from "graphile-build";
-import type { Attribute, Constraint, PgTable } from "./types";
+import type {} from 'graphile-config';
+import type {} from 'postgraphile';
+import type { Attribute, Constraint, PgTable } from './types';
 import {
   GraphQLFieldConfigMap,
   GraphQLObjectType,
-  GraphQLScalarType,
-} from "graphql";
-import assert from "assert";
+  GraphQLScalarType
+} from 'graphql';
+import assert from 'assert';
+import { Build, Context } from 'postgraphile-core';
+
+const version = require('../package.json').version;
 
 type Primitive = string | number | null;
 
-export const PgMutationUpsertPlugin: Plugin = (builder) => {
-  builder.hook("GraphQLObjectType:fields", (fields, build, context) => {
-    const {
-      extend,
-      pgGetGqlInputTypeByTypeIdAndModifier,
-      pgGetGqlTypeByTypeIdAndModifier,
-      pgIntrospectionResultsByKind,
-      pgOmit: omit,
-    } = build;
-    const {
-      scope: { isRootMutation },
-    } = context;
-    if (!isRootMutation) return fields;
-    const allUniqueConstraints = (
-      pgIntrospectionResultsByKind.constraint as Constraint[]
-    ).filter((con) => con.type === "u" || con.type === "p");
-    const upsertFieldsByName = (pgIntrospectionResultsByKind.class as PgTable[])
-      .filter(
-        (table) => {
-          const hasUniqueConstraint = allUniqueConstraints.some((c) => c.classId === table.id);
-          return !!table.namespace &&
-            (!!table.primaryKeyConstraint || hasUniqueConstraint) &&
-            !omit(table, "upsert") &&
-            table.isSelectable &&
-            table.isInsertable &&
-            table.isUpdatable
-      })
-      .reduce<GraphQLFieldConfigMap<unknown, unknown>>((fnsByName, table) => {
-        const gqlTable = pgGetGqlTypeByTypeIdAndModifier(table.type.id, null);
-        if (!gqlTable) return fnsByName;
-        const gqlTableInput = pgGetGqlInputTypeByTypeIdAndModifier(
-          table.type.id,
-          null
-        );
-        if (!gqlTableInput) return fnsByName;
-        const { fn, upsertFnName } = createUpsertField({
-          allUniqueConstraints,
-          table,
-          build,
-          context,
-          gqlTable,
-          gqlTableInput,
-        });
-        fnsByName[upsertFnName] = fn;
-        return fnsByName;
-      }, {});
-    return extend(fields, upsertFieldsByName);
-  });
-};
-PgMutationUpsertPlugin.displayName = "upsert";
+export const PgMutationUpsertPlugin: GraphileConfig.Plugin = {
+  name: 'PgMutationUpsertPlugin',
+  version,
+  schema: {
+    hooks: {
+      GraphQLObjectType_fields (fields, build, context) {
+        const {
+          extend,
+          pgGetGqlInputTypeByTypeIdAndModifier,
+          pgGetGqlTypeByTypeIdAndModifier,
+          pgIntrospectionResultsByKind,
+          pgOmit: omit,
+        } = build;
+        const {
+          scope: { isRootMutation },
+        } = context;
+        if (!isRootMutation) return fields;
+        const allUniqueConstraints = (
+          pgIntrospectionResultsByKind.constraint as Constraint[]
+        ).filter((con) => con.type === 'u' || con.type === 'p');
+        const upsertFieldsByName = (pgIntrospectionResultsByKind.class as PgTable[])
+          .filter(
+            (table) => {
+              const hasUniqueConstraint = allUniqueConstraints.some((c) => c.classId === table.id);
+              return !!table.namespace &&
+                (!!table.primaryKeyConstraint || hasUniqueConstraint) &&
+                !omit(table, 'upsert') &&
+                table.isSelectable &&
+                table.isInsertable &&
+                table.isUpdatable;
+            })
+          .reduce<GraphQLFieldConfigMap<unknown, unknown>>((fnsByName, table) => {
+            const gqlTable = pgGetGqlTypeByTypeIdAndModifier(table.type.id, null);
+            if (!gqlTable) return fnsByName;
+            const gqlTableInput = pgGetGqlInputTypeByTypeIdAndModifier(
+              table.type.id,
+              null,
+            );
+            if (!gqlTableInput) return fnsByName;
+            const { fn, upsertFnName } = createUpsertField({
+              allUniqueConstraints,
+              table,
+              build,
+              context,
+              gqlTable,
+              gqlTableInput,
+            });
+            fnsByName[upsertFnName] = fn;
+            return fnsByName;
+          }, {});
+        return extend(fields, upsertFieldsByName);
+      }
+    }
+  }
+}
 
 const hasOwnProperty = (x: unknown, key: string) =>
   Object.prototype.hasOwnProperty.call(x, key);
 
 function createUpsertField({
-  allUniqueConstraints,
-  build,
-  context,
-  gqlTable,
-  gqlTableInput,
-  table,
-}: {
+                             allUniqueConstraints,
+                             build,
+                             context,
+                             gqlTable,
+                             gqlTableInput,
+                             table,
+                           }: {
   allUniqueConstraints: Constraint[];
   build: Build;
   context: Context<GraphQLFieldConfigMap<unknown, unknown>>;
@@ -100,7 +109,7 @@ function createUpsertField({
   const { fieldWithHooks } = context;
   const tableTypeName = inflection.tableType(table);
   const uniqueConstraints = allUniqueConstraints.filter(
-    (con) => con.classId === table.id
+    (con) => con.classId === table.id,
   );
   const attributes = pgIntrospectionResultsByKind.attribute
     .filter((attr) => attr.classId === table.id)
@@ -118,36 +127,36 @@ function createUpsertField({
    * PgAllRows
    */
 
-  // For each unique constraint we gather all of the fields into an
-  // InputType. Technically, we probably want to have **each**
-  // uniqueConstraint create it's own type and then union these, but
-  // YOLO
+    // For each unique constraint we gather all of the fields into an
+    // InputType. Technically, we probably want to have **each**
+    // uniqueConstraint create it's own type and then union these, but
+    // YOLO
   const gqlInputTypesByFieldName = uniqueConstraints.reduce<
-    Record<string, { type: GraphQLScalarType }>
-  >((acc, constraint) => {
-    const keys = constraint.keyAttributeNums.map((num) =>
-      attributes.find((attr) => attr.num === num)
-    );
-    if (keys.some((key) => omit(key, "read"))) {
-      return acc;
-    } else if (!keys.every((_) => _)) {
-      throw new Error("Consistency error: could not find an attribute!");
-    }
-    keys.forEach((key) => {
-      const fieldName = inflection.camelCase(key.name);
-      const InputType = pgGetGqlInputTypeByTypeIdAndModifier(
-        key.typeId,
-        key.typeModifier
+      Record<string, { type: GraphQLScalarType }>
+    >((acc, constraint) => {
+      const keys = constraint.keyAttributeNums.map((num) =>
+        attributes.find((attr) => attr.num === num),
       );
-      if (!InputType) {
-        throw new Error(
-          `Could not find input type for key '${key.name}' on type '${tableTypeName}'`
-        );
+      if (keys.some((key) => omit(key, 'read'))) {
+        return acc;
+      } else if (!keys.every((_) => _)) {
+        throw new Error('Consistency error: could not find an attribute!');
       }
-      acc[fieldName] = { type: InputType };
-    });
-    return acc;
-  }, {});
+      keys.forEach((key) => {
+        const fieldName = inflection.camelCase(key.name);
+        const InputType = pgGetGqlInputTypeByTypeIdAndModifier(
+          key.typeId,
+          key.typeModifier,
+        );
+        if (!InputType) {
+          throw new Error(
+            `Could not find input type for key '${key.name}' on type '${tableTypeName}'`,
+          );
+        }
+        acc[fieldName] = { type: InputType };
+      });
+      return acc;
+    }, {});
 
   // Unique Where conditions
   const WhereType = newWithHooks(
@@ -160,7 +169,7 @@ function createUpsertField({
     {
       isPgCreateInputType: false,
       pgInflection: table,
-    }
+    },
   );
 
   // Standard input type that 'create' uses
@@ -172,23 +181,23 @@ function createUpsertField({
       fields: {
         clientMutationId: {
           description:
-            "An arbitrary string value with no semantic meaning. Will be included in the payload verbatim. May be used to track mutations by the client.",
+            'An arbitrary string value with no semantic meaning. Will be included in the payload verbatim. May be used to track mutations by the client.',
           type: GraphQLString,
         },
         ...(gqlTableInput
           ? {
-              [inflection.tableFieldName(table)]: {
-                description: `The \`${tableTypeName}\` to be upserted by this mutation.`,
-                type: new GraphQLNonNull(gqlTableInput),
-              },
-            }
+            [inflection.tableFieldName(table)]: {
+              description: `The \`${tableTypeName}\` to be upserted by this mutation.`,
+              type: new GraphQLNonNull(gqlTableInput),
+            },
+          }
           : null),
       },
     },
     {
       isPgCreateInputType: false,
       pgInflection: table,
-    }
+    },
   );
 
   // Standard payload type that 'create' uses
@@ -202,7 +211,7 @@ function createUpsertField({
         return {
           clientMutationId: {
             description:
-              "The exact same `clientMutationId` that was provided in the mutation input, unchanged and unused. May be used by a client to track mutations.",
+              'The exact same `clientMutationId` that was provided in the mutation input, unchanged and unused. May be used by a client to track mutations.',
             type: GraphQLString,
           },
           [tableName]: pgField(build, fieldWithHooks, tableName, {
@@ -216,7 +225,7 @@ function createUpsertField({
       isMutationPayload: true,
       isPgCreatePayloadType: false,
       pgIntrospection: table,
-    }
+    },
   );
   const upsertFnName = `upsert${tableTypeName}`;
   return {
@@ -240,20 +249,20 @@ function createUpsertField({
             _data,
             { where: whereRaw, input },
             { pgClient },
-            resolveInfo
+            resolveInfo,
           ) {
             const where: Record<string, Primitive> = whereRaw;
             const parsedResolveInfoFragment = parseResolveInfo(resolveInfo);
             const resolveData = getDataFromParsedResolveInfoFragment(
               parsedResolveInfoFragment,
-              PayloadType
+              PayloadType,
             );
             const insertedRowAlias = sql.identifier(Symbol());
             const query = queryFromResolveData(
               insertedRowAlias,
               insertedRowAlias,
               resolveData,
-              {}
+              {},
             );
 
             const sqlColumns: { names: string[] }[] = [];
@@ -264,13 +273,13 @@ function createUpsertField({
 
             // Find the unique constraints
             const uniqueConstraints = allUniqueConstraints.filter(
-              (con) => con.classId === table.id
+              (con) => con.classId === table.id,
             );
 
             // Store attributes (columns) for easy access
             const attributes: Attribute[] =
               pgIntrospectionResultsByKind.attribute.filter(
-                (attr) => attr.classId === table.id
+                (attr) => attr.classId === table.id,
               );
 
             // Figure out which columns the unique constraints belong to
@@ -284,10 +293,10 @@ function createUpsertField({
                     const match = attributes.find((attr) => attr.num === num);
                     assert(match, `no attribute found for ${num}`);
                     return match;
-                  })
+                  }),
                 ),
               }),
-              {}
+              {},
             );
 
             const fieldToAttributeMap = attributes.reduce(
@@ -295,21 +304,21 @@ function createUpsertField({
                 ...acc,
                 [inflection.camelCase(attr.name)]: attr,
               }),
-              {}
+              {},
             );
 
             // Pre-process our primary key constraint
             const primaryKeyConstraint = uniqueConstraints.find(
-              (con) => con.type === "p"
+              (con) => con.type === 'p',
             );
             const primaryKeyConstraintCols = new Set(
-              primaryKeyConstraint?.keyAttributes.map(({ name }) => name) ?? []
+              primaryKeyConstraint?.keyAttributes.map(({ name }) => name) ?? [],
             );
 
             // Pre-process our data inputs from the payload (what was manually passed in)
             const inputDataKeys = new Set(Object.keys(inputData));
             const inputDataColumns = new Set(
-              [...inputDataKeys].map((key) => fieldToAttributeMap[key].name)
+              [...inputDataKeys].map((key) => fieldToAttributeMap[key].name),
             );
 
             // Construct a super-set of fields passed up plus columns with default values
@@ -318,7 +327,7 @@ function createUpsertField({
               ...inputDataColumns,
               ...attributes
                 .filter(
-                  (a) => a.hasDefault && !primaryKeyConstraintCols.has(a.name)
+                  (a) => a.hasDefault && !primaryKeyConstraintCols.has(a.name),
                 )
                 .map(({ name }) => name),
             ]);
@@ -335,30 +344,30 @@ function createUpsertField({
             const matchingConstraint =
               (where
                 ? Object.entries(columnsByConstraintName).find(([, columns]) =>
-                    [...columns].every(
-                      (col) => inflection.camelCase(col.name) in where
-                    )
-                  )
+                  [...columns].every(
+                    (col) => inflection.camelCase(col.name) in where,
+                  ),
+                )
                 : Object.entries(columnsByConstraintName).find(([, columns]) =>
-                    [...columns].every((col) => inputDataColumns.has(col.name))
-                  )) ??
+                  [...columns].every((col) => inputDataColumns.has(col.name)),
+                )) ??
               Object.entries(columnsByConstraintName).find(([, columns]) =>
                 [...columns].every((col) =>
-                  inputDataColumnsWithDefaults.has(col.name)
-                )
+                  inputDataColumnsWithDefaults.has(col.name),
+                ),
               ) ??
               Object.entries(columnsByConstraintName).find(
-                ([key]) => key === primaryKeyConstraint?.name
+                ([key]) => key === primaryKeyConstraint?.name,
               );
 
             if (!matchingConstraint) {
               throw new Error(
                 `Unable to determine upsert unique constraint for given upserted columns: ${[
                   ...inputDataKeys,
-                ].join(", ")}`
+                ].join(', ')}`,
               );
             }
-            assert(table.namespace, "expected table namespace");
+            assert(table.namespace, 'expected table namespace');
 
             const [constraintName] = matchingConstraint;
             const columnNamesSkippingUpdate = new Set<string>();
@@ -376,7 +385,7 @@ function createUpsertField({
                 hasWhereClauseValue = true;
               }
 
-              if (omit(attr, "updateOnConflict")) {
+              if (omit(attr, 'updateOnConflict')) {
                 columnNamesSkippingUpdate.add(attr.name);
               }
 
@@ -388,7 +397,7 @@ function createUpsertField({
                 // The user passed a where clause condition value that does not match the upsert input value for the same property
                 if (hasWhereClauseValue && whereClauseValue !== val) {
                   throw new Error(
-                    `Value passed in the input for ${fieldName} does not match the where clause value.`
+                    `Value passed in the input for ${fieldName} does not match the where clause value.`,
                   );
                 }
 
@@ -398,7 +407,7 @@ function createUpsertField({
                 // If it was ommitted in the input, we should add it
                 sqlColumns.push(sql.identifier(attr.name));
                 sqlValues.push(
-                  gql2pg(whereClauseValue, attr.type, attr.typeModifier)
+                  gql2pg(whereClauseValue, attr.type, attr.typeModifier),
                 );
               }
             });
@@ -410,8 +419,8 @@ function createUpsertField({
               .map(
                 (col) =>
                   sql.query`${sql.identifier(
-                    col.names[0]
-                  )} = excluded.${sql.identifier(col.names[0])}`
+                    col.names[0],
+                  )} = excluded.${sql.identifier(col.names[0])}`,
               );
 
             // SQL query for upsert mutations
@@ -420,25 +429,25 @@ function createUpsertField({
               conflictUpdateArray.length === 0
                 ? sql.fragment`do nothing`
                 : sql.fragment`on constraint ${sql.identifier(constraintName)}
-            do update set ${sql.join(conflictUpdateArray, ", ")}`;
+            do update set ${sql.join(conflictUpdateArray, ', ')}`;
             const mutationQuery = sql.query`
-                  insert into ${sql.identifier(
-                    table.namespace.name,
-                    table.name
-                  )}
-                  ${
-                    sqlColumns.length
-                      ? sql.fragment`(${sql.join(sqlColumns, ", ")})
-                      values (${sql.join(sqlValues, ", ")})
+              INSERT INTO ${sql.identifier(
+                      table.namespace.name,
+                      table.name,
+              )}
+                ${
+                        sqlColumns.length
+                                ? sql.fragment`(${sql.join(sqlColumns, ', ')})
+                      values (${sql.join(sqlValues, ', ')})
                       on conflict ${conflictAction}`
-                      : sql.fragment`default values`
-                  } returning *`;
+                                : sql.fragment`default values`
+                } RETURNING *`;
             const rows = await viaTemporaryTable(
               pgClient,
               sql.identifier(table.namespace.name, table.name),
               mutationQuery,
               insertedRowAlias,
-              query
+              query,
             );
             return {
               clientMutationId: input.clientMutationId,
@@ -451,7 +460,7 @@ function createUpsertField({
         pgFieldIntrospection: table,
         isPgCreateMutationField: false,
         isPgUpsertMutationField: true,
-      }
+      },
     ),
   };
 }

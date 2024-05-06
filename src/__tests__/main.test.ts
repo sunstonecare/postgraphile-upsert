@@ -9,6 +9,8 @@ import ava, { TestFn, ExecutionContext } from "ava";
 import { nanographql } from "./fixture/nanographql";
 import pRetry from "p-retry";
 import fetch from "node-fetch";
+// @ts-ignore
+import { PostGraphileAmberPreset } from 'postgraphile/presets/amber';
 
 type TestContext = DbContext & {
   client: Pool;
@@ -21,18 +23,28 @@ type PluginExecutionContext = ExecutionContext<TestContext>;
 
 const test = ava as TestFn<TestContext>;
 
+
+
 const initializePostgraphile = async (
   t: PluginExecutionContext,
   options: Record<string, unknown> = {}
 ) => {
-  const middleware = postgraphile(t.context.client, "public", {
-    graphiql: true,
-    appendPlugins: [PgMutationUpsertPlugin],
-    exportGqlSchemaPath: "./postgraphile.graphql",
-    graphileBuildOptions: {
-      ...options,
-    },
-  });
+
+  const middleware = postgraphile<Request, Response>(
+    t.context.client,
+    "public",
+    {
+      extends: [
+        PostGraphileAmberPreset,
+
+      ],
+      plugins: [PgMutationUpsertPlugin],
+      schema: {
+        exportGqlSchemaPath: "./postgraphile.graphql",
+      },
+    }
+  );
+
   t.context.middleware = middleware;
   const serverPort = await freeport();
   t.context.serverPort = serverPort;
